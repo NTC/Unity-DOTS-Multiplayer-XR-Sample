@@ -52,8 +52,6 @@ public class PlayerGhostSpawnClassificationSystem : SystemBase
         var commandTargetFromEntity = GetComponentDataFromEntity<CommandTargetComponent>(false);
 
         //We search for player entities with a PredictedGhostComponent (which means it is ours)
-        //In order to write over a variable that we pass through to a job we must include "WithNativeDisableParallelForRestricion"
-        //It means "yes we know what we are doing, allow us to write over this variable"
         Entities
         .WithAll<PlayerTag, PredictedGhostComponent>()
         .WithNone<GhostPlayerState>()
@@ -81,6 +79,28 @@ public class PlayerGhostSpawnClassificationSystem : SystemBase
             commandBuffer.AddComponent(entityInQueryIndex, cameraEntity, new LocalToParent() );
 
         }).ScheduleParallel();
+
+        //This .ForEach() looks for Entities with a GhostPlayerState but no Snapshot data
+        //Because GhostPlayerState is an ISystemStateComponentData component, it does not get deleted with the rest of the entity
+        //It must be manually deleted
+        //By using GhostPlayerState we are able to "clean up" on the client side and clear our targetEntity in our NCE's CommandTargetComponent
+        //This allows us to "reset" and create a PlayerSpawnRequestRpc again when we hit spacebar (targetEntity must equal null to trigger the RPC)
+        Entities.WithNone<SnapshotData>()
+            .WithAll<GhostPlayerState>()
+            .WithNativeDisableParallelForRestriction(commandTargetFromEntity)
+            .ForEach((Entity ent, int entityInQueryIndex) => 
+            {
+            var commandTarget = commandTargetFromEntity[playerEntity];
+
+            if (ent == commandTarget.targetEntity)
+            {
+                commandTarget.targetEntity = Entity.Null;
+                commandTargetFromEntity[playerEntity] = commandTarget;
+            }
+            commandBuffer.RemoveComponent<GhostPlayerState>(entityInQueryIndex, ent);
+        }).ScheduleParallel();
+        m_BeginSimEcb.AddJobHandleForProducer(Dependency);
+
 
         m_BeginSimEcb.AddJobHandleForProducer(Dependency);
     }
